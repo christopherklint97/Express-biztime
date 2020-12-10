@@ -1,123 +1,164 @@
-/** Routes for companies */
+/** Routes for companies. */
 
-const db = require("../db");
+
 const express = require("express");
-const router = express.Router();
+const slugify = require("slugify");
+const ExpressError = require("../expressError")
+const db = require("../db");
 
-/** Get companies: [{code, name}, {code, name}, {code, name}] */
+let router = new express.Router();
+
+
+/** GET / => list of companies.
+ *
+ * =>  {companies: [{code, name, descrip}, {code, name, descrip}, ...]}
+ *
+ * */
 
 router.get("/", async function (req, res, next) {
   try {
-    const results = await db.query(`SELECT code, name FROM companies`);
+    const result = await db.query(
+          `SELECT code, name 
+           FROM companies 
+           ORDER BY name`
+    );
 
-    return res.json(results.rows);
-  } catch (err) {
+    return res.json({"companies": result.rows});
+  }
+
+  catch (err) {
     return next(err);
   }
 });
 
-// Search by company code. */
+
+/** GET /[code] => detail on company
+ *
+ * =>  {company: {code, name, descrip, invoices: [id, ...]}}
+ *
+ * */
 
 router.get("/:code", async function (req, res, next) {
   try {
-    const code = req.params.code;
+    let code = req.params.code;
 
     const compResult = await db.query(
-      `SELECT code, name, description,
-       FROM companies
-       WHERE code=$1`,
-      [code]
+          `SELECT code, name, description
+           FROM companies
+           WHERE code = $1`,
+        [code]
     );
 
     const invResult = await db.query(
-      `SELECT id
+          `SELECT id
            FROM invoices
            WHERE comp_code = $1`,
-      [code]
+        [code]
     );
 
     if (compResult.rows.length === 0) {
-      let notFoundError = new Error(`There is no company with code '${code}`);
-      notFoundError.status = 404;
-      throw notFoundError;
+      throw new ExpressError(`No such company: ${code}`, 404)
     }
 
     const company = compResult.rows[0];
     const invoices = invResult.rows;
 
-    company.invoices = invoices.map((inv) => inv.id);
+    company.invoices = invoices.map(inv => inv.id);
 
-    return res.json({ company });
-  } catch (err) {
+    return res.json({"company": company});
+  }
+
+  catch (err) {
     return next(err);
   }
 });
 
-/** Create new company, return company */
+
+/** POST / => add new company
+ *
+ * {name, descrip}  =>  {company: {code, name, descrip}}
+ *
+ * */
 
 router.post("/", async function (req, res, next) {
   try {
-    const { code, name, description } = req.body;
+    let {name, description} = req.body;
+    let code = slugify(name, {lower: true});
 
     const result = await db.query(
-      `INSERT INTO companies (code, name, description) 
-           VALUES ($1, $2, $3)
+          `INSERT INTO companies (code, name, description) 
+           VALUES ($1, $2, $3) 
            RETURNING code, name, description`,
-      [code, name, description]
-    );
+        [code, name, description]);
 
-    return res.status(201).json(result.rows[0]);
-  } catch (err) {
+    return res.status(201).json({"company": result.rows[0]});
+  }
+
+  catch (err) {
     return next(err);
   }
 });
 
-/** Update company, returning company */
+
+/** PUT /[code] => update company
+ *
+ * {name, descrip}  =>  {company: {code, name, descrip}}
+ *
+ * */
 
 router.put("/:code", async function (req, res, next) {
   try {
-    const { name, description } = req.body;
+    let {name, description} = req.body;
+    let code = req.params.code;
 
     const result = await db.query(
-      `UPDATE companies SET name=$1, type=$2
+          `UPDATE companies
+           SET name=$1, description=$2
            WHERE code = $3
            RETURNING code, name, description`,
-      [name, description, req.params.code]
-    );
+        [name, description, code]);
 
     if (result.rows.length === 0) {
-      throw new ExpressError(
-        `There is no company with code of '${req.params.code}`,
-        404
-      );
+      throw new ExpressError(`No such company: ${code}`, 404)
+    } else {
+      return res.json({"company": result.rows[0]});
     }
+  }
 
-    return res.json(result.rows[0]);
-  } catch (err) {
+  catch (err) {
     return next(err);
   }
+
 });
 
-/** Delete company, returning {status: "deleted"} */
+
+/** DELETE /[code] => delete company
+ *
+ * => {status: "added"}
+ *
+ */
 
 router.delete("/:code", async function (req, res, next) {
   try {
-    const result = await db.query("DELETE FROM companies WHERE code = $1", [
-      req.params.code,
-    ]);
+    let code = req.params.code;
 
-    if (result.rows.length === 0) {
-      throw new ExpressError(
-        `There is no company with code of '${req.params.code}`,
-        404
-      );
+    const result = await db.query(
+          `DELETE FROM companies
+           WHERE code=$1
+           RETURNING code`,
+        [code]);
+
+    if (result.rows.length == 0) {
+      throw new ExpressError(`No such company: ${code}`, 404)
+    } else {
+      return res.json({"status": "deleted"});
     }
+  }
 
-    return res.json({ status: "deleted" });
-  } catch (err) {
+  catch (err) {
     return next(err);
   }
 });
-// end
+
 
 module.exports = router;
